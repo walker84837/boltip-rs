@@ -8,7 +8,6 @@ This is a public IP address getter, written in Rust. The program will automatica
 2.  [How to Use](#how-to-use)
 3.  [Contributing](#contributing)
 4.  [License](#license)
-5.  [Example](#example)
 
 ## Installation
 
