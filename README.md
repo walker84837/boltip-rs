@@ -35,8 +35,7 @@ Contributions to the `public-ip-getter-rs` project are always welcome\! If you w
 
 1.  Fork the repository.
 2.  Clone the forked repository:
-    ``` git clone https://github.com/your-username/public-ip-getter-rs.git
-    ```
+    ```git clone https://github.com/your-username/public-ip-getter-rs.git```
 3.  Make your changes and improvements and commit them.
 4.  Create a pull request with a detailed description of your changes.
 
