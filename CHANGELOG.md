@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## \[Unreleased\]
 
+## \[0.1.1\] - 2023-11-26
+
+### Added
+
+  - Added random IP address lookup, at the user's choice.
+
+### Fixed
+
+  - None.
+
+### Changed
+
+  - None.
+
+### Removed
+
+  - None.
+
 ## \[0.1.0\] - 2023-10-19
 
 ### Added
