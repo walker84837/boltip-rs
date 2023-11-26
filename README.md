@@ -13,21 +13,19 @@ This is a public IP address getter, written in Rust. The program will automatica
 To utilize this application, it is necessary to have Rust and its package manager, Cargo, installed. You can install them by following the official [Rust installation guide](https://www.rust-lang.org/tools/install).
 Once you have successfully installed Rust and Cargo, you can proceed to build and install this program by executing the following command:
 
-``` bash
-cargo install --path .
-```
+```$ cargo install --path .```
 
 Or you can download the precompiled binaries.
 
 ## How to Use
 
-To use lookup an IP, you need to provide the following command-line arguments:
+To look up an IP, you need to provide the following command-line arguments:
 
-``` ./public-ip-getter-rs <verbose> optional: -i [ip]
-```
+```$ ./public-ip-getter-rs <verbose> optional: -i [ip]```
 
   - `<verbose>`: More information will be provided.
   - `<-i, --ip-address>`: The IP address to look up.
+  - `[<-r, --random>] <true|false>`: Use a random IP or not.
 
 ## License
 
