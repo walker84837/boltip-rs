@@ -1,21 +1,26 @@
 #![allow(dead_code)]
 
-use anyhow::{Error, Result};
+use anyhow::{bail, Result};
+use clap::Parser;
+use log::{error, info, warn};
 use serde::Deserialize;
-use structopt::StructOpt;
 
-#[derive(StructOpt)]
+#[derive(Parser)]
 struct Cli {
-    /// Get additional information about the IP address
-    #[structopt(short, long)]
+    /// Get more info on the provided IP address
+    #[clap(short, long)]
     verbose: bool,
 
-    /// Generate a random IP
-    #[structopt(short, long)]
+    /// Enable logging
+    #[clap(short, long)]
+    logging: bool,
+
+    /// Get a random IP and show how the program works
+    #[clap(short, long)]
     random: bool,
 
-    /// IP address to look up. Defualt: lookup the host's IP address
-    #[structopt(short = "i", long = "address")]
+    /// This is the IP address to look up. The default is the host IP
+    #[clap(short = 'i', long = "addr")]
     ip_address: Option<String>,
 }
 
@@ -58,19 +63,21 @@ fn generate_random_ip() -> String {
         };
 
         if !is_special_use {
-            return format!("{}.{}.{}.{}", ip_parts[0], ip_parts[1], ip_parts[2], ip_parts[3]);
+            return format!(
+                "{}.{}.{}.{}",
+                ip_parts[0], ip_parts[1], ip_parts[2], ip_parts[3]
+            );
         }
     }
 }
 
 fn response_to_string(resp: Result<ureq::Response, ureq::Error>, fallback: &str) -> Result<String> {
     let body: String = match &resp {
-        Ok(_) => resp?
-            .into_string()
-            .unwrap_or_else(|_| fallback.to_string()),
+        Ok(_) => resp?.into_string().unwrap_or_else(|_| fallback.to_string()),
         Err(error) => {
-            eprintln!("Error: {}", error);
-            eprintln!("Bad HTTP request: {}", resp?.status());
+            error!("There was an error with processing the request: {}", error);
+            error!("Response status: {}", resp?.status());
+            warn!("Falling back to: `{}`. Errors may follow this.", fallback);
             fallback.to_string()
         }
     };
@@ -84,6 +91,7 @@ fn get_public_ip() -> Result<String> {
 }
 
 fn get_ip_info(ip: &str) -> Result<IpInfo> {
+    info!("Getting information about IP '{}'.", ip);
     let url = format!("https://api.iplocation.net/?ip={}", ip);
     let response = ureq::get(&url).call();
     let body = response_to_string(response, "{}")?;
@@ -94,19 +102,29 @@ fn get_ip_info(ip: &str) -> Result<IpInfo> {
 const FALLBACK_IP: &str = "0.0.0.0";
 
 fn main() -> Result<()> {
-    let args = Cli::from_args();
+    let args = Cli::parse();
+
+    if args.logging {
+        simple_logger::init_with_env().unwrap();
+    }
 
     let mut ip_to_lookup = match args.ip_address {
         Some(ip) => ip,
-        None => get_public_ip()?,
+        None => {
+            info!("Getting IP address of host machine.");
+            get_public_ip()?
+        }
     };
 
     if ip_to_lookup == FALLBACK_IP {
-        return Err(Error::msg("The HTTP response may be incorrect, or a special-use IP address may have been provided."));
+        bail!("The response is wrong or the IP address is special-use.");
     }
 
     ip_to_lookup = match args.random {
-        true => generate_random_ip(),
+        true => {
+            info!("Generating a random IP address.");
+            generate_random_ip()
+        }
         false => ip_to_lookup,
     };
 
