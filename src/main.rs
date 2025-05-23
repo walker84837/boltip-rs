@@ -1,9 +1,27 @@
-#![allow(dead_code)]
-
-use anyhow::{bail, Result};
+use crate::output::OutputJson;
 use clap::Parser;
 use log::{error, info, warn};
 use serde::Deserialize;
+use std::net::Ipv4Addr;
+use thiserror::Error;
+
+mod output;
+
+#[derive(Error, Debug)]
+enum RequestError {
+    #[error("Network request failed: {0}")]
+    UreqError(#[from] ureq::Error),
+    #[error("Invalid response body: {0}")]
+    ResponseBodyError(#[from] std::io::Error),
+    #[error("Invalid JSON format: {0}")]
+    InvalidJson(#[from] serde_json::Error),
+    #[error("Special-use IP address")]
+    SpecialUse,
+    #[error("Invalid IP format")]
+    InvalidIpFormat,
+    #[error("No information found for IP")]
+    NoIpInformation,
+}
 
 #[derive(Parser)]
 struct Cli {
@@ -22,9 +40,13 @@ struct Cli {
     /// This is the IP address to look up. The default is the host IP
     #[clap(short = 'i', long = "addr")]
     ip_address: Option<String>,
+
+    /// Show the IP information in JSON format
+    json: bool,
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 struct IpInfo {
     ip: String,
     ip_number: String,
@@ -36,33 +58,35 @@ struct IpInfo {
     response_message: String,
 }
 
+fn is_special_use(ip_parts: &[u8]) -> bool {
+    match ip_parts {
+        [0, _, _, _] => true,         // 0.0.0.0/8
+        [10, _, _, _] => true,        // 10.0.0.0/8
+        [14, _, _, _] => true,        // 14.0.0.0/8
+        [24, _, _, _] => true,        // 24.0.0.0/8
+        [39, _, _, _] => true,        // 39.0.0.0/8
+        [127, _, _, _] => true,       // 127.0.0.0/8
+        [128, _, _, _] => true,       // 128.0.0.0/16
+        [169, 254, _, _] => true,     // 169.254.0.0/16
+        [172, 16..=31, _, _] => true, // 172.16.0.0/12
+        [191, 255, _, _] => true,     // 191.255.0.0/16
+        [192, 0, 0, _] => true,       // 192.0.0.0/24
+        [192, 0, 2, _] => true,       // 192.0.2.0/24
+        [192, 88, 99, _] => true,     // 192.88.99.0/24
+        [192, 168, _, _] => true,     // 192.168.0.0/16
+        [198, 18, _, _] => true,      // 198.18.0.0/15
+        [223, 255, 255, _] => true,   // 223.255.255.0/24
+        [224..=239, _, _, _] => true, // 224.0.0.0/4 (multicast)
+        [240..=255, _, _, _] => true, // 240.0.0.0/4 (reserved)
+        _ => false,
+    }
+}
+
 fn generate_random_ip() -> String {
     loop {
         let ip_parts: Vec<u8> = (0..4).map(|_| fastrand::u8(1..255)).collect();
 
-        let is_special_use = match ip_parts.as_slice() {
-            [0, _, _, _] => true,                               // 0.0.0.0/8
-            [10, _, _, _] => true,                              // 10.0.0.0/8
-            [14, _, _, _] => true,                              // 14.0.0.0/8
-            [24, _, _, _] => true,                              // 24.0.0.0/8
-            [39, _, _, _] => true,                              // 39.0.0.0/8
-            [127, _, _, _] => true,                             // 127.0.0.0/8
-            [128, _, _, _] => true,                             // 128.0.0.0/16
-            [169, 254, _, _] => true,                           // 169.254.0.0/16
-            [172, x, _, _] if (&16..=&31).contains(&x) => true, // 172.16.0.0/12
-            [191, 255, _, _] => true,                           // 191.255.0.0/16
-            [192, 0, 0, _] => true,                             // 192.0.0.0/24
-            [192, 0, 2, _] => true,                             // 192.0.2.0/24
-            [192, 88, 99, _] => true,                           // 192.88.99.0/24
-            [192, 168, _, _] => true,                           // 192.168.0.0/16
-            [198, 18, _, _] => true,                            // 198.18.0.0/15
-            [223, 255, 255, _] => true,                         // 223.255.255.0/24
-            [224..=239, _, _, _] => true,                       // 224.0.0.0/4 (multicast)
-            [240..=255, _, _, _] => true,                       // 240.0.0.0/4 (reserved)
-            _ => false,
-        };
-
-        if !is_special_use {
+        if !is_special_use(&ip_parts) {
             return format!(
                 "{}.{}.{}.{}",
                 ip_parts[0], ip_parts[1], ip_parts[2], ip_parts[3]
@@ -71,72 +95,92 @@ fn generate_random_ip() -> String {
     }
 }
 
-fn response_to_string(resp: Result<ureq::Response, ureq::Error>, fallback: &str) -> Result<String> {
-    let body: String = match &resp {
-        Ok(_) => resp?.into_string().unwrap_or_else(|_| fallback.to_string()),
-        Err(error) => {
-            error!("There was an error with processing the request: {}", error);
-            error!("Response status: {}", resp?.status());
-            warn!("Falling back to: `{}`. Errors may follow this.", fallback);
-            fallback.to_string()
-        }
-    };
-    Ok(body)
+fn parse_ip(ip: &str) -> Result<Vec<u8>, RequestError> {
+    ip.parse()
+        .map_err(|_| RequestError::InvalidIpFormat)
+        .map(|ip: Ipv4Addr| ip.octets().to_vec())
 }
 
-fn get_public_ip() -> Result<String> {
-    let response = ureq::get("https://ident.me").call();
-    let resp = response_to_string(response, FALLBACK_IP)?;
-    Ok(resp)
+fn get_public_ip() -> Result<String, RequestError> {
+    ureq::get("https://4.ident.me")
+        .call()
+        .map_err(|e| RequestError::UreqError(e))?
+        .into_string()
+        .map_err(|e| RequestError::ResponseBodyError(e))
 }
 
-fn get_ip_info(ip: &str) -> Result<IpInfo> {
-    info!("Getting information about IP '{}'.", ip);
-    let url = format!("https://api.iplocation.net/?ip={}", ip);
-    let response = ureq::get(&url).call();
-    let body = response_to_string(response, "{}")?;
-    let ip_info: IpInfo = serde_json::from_str(&body)?;
-    Ok(ip_info)
+fn get_ip_info(ip: &str) -> Result<IpInfo, RequestError> {
+    info!("Fetching info for IP: {ip}");
+    let url = format!("https://api.iplocation.net/?ip={ip}");
+
+    let response = ureq::get(&url).call().map_err(|e| {
+        error!("IP info request failed: {e}");
+        e
+    })?;
+
+    let body = response
+        .into_string()
+        .map_err(|e| RequestError::ResponseBodyError(e))?;
+
+    let ip_info: IpInfo = serde_json::from_str(&body).map_err(|e| RequestError::InvalidJson(e))?;
+
+    if ip_info.response_code != "200" {
+        warn!("API returned non-success status");
+        Err(RequestError::NoIpInformation)
+    } else {
+        Ok(ip_info)
+    }
 }
 
-const FALLBACK_IP: &str = "0.0.0.0";
-
-fn main() -> Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
-
     if args.logging {
         simple_logger::init_with_env().unwrap();
     }
 
-    let mut ip_to_lookup = match args.ip_address {
-        Some(ip) => ip,
-        None => {
-            info!("Getting IP address of host machine.");
-            get_public_ip()?
-        }
+    let ip_to_lookup = if args.random {
+        generate_random_ip()
+    } else {
+        args.ip_address.unwrap_or_else(|| {
+            get_public_ip().unwrap_or_else(|e| {
+                warn!("Using fallback IP due to error: {e}");
+                "0.0.0.0".to_string()
+            })
+        })
     };
 
-    if ip_to_lookup == FALLBACK_IP {
-        bail!("The response is wrong or the IP address is special-use.");
+    if !args.random {
+        parse_ip(&ip_to_lookup)
+            .and_then(|parts| {
+                if is_special_use(&parts) {
+                    Err(RequestError::SpecialUse)
+                } else {
+                    Ok(())
+                }
+            })
+            .map_err(|e| {
+                error!("IP validation failed: {e}");
+                e
+            })?;
     }
 
-    ip_to_lookup = match args.random {
-        true => {
-            info!("Generating a random IP address.");
-            generate_random_ip()
-        }
-        false => ip_to_lookup,
-    };
+    let ip_info = get_ip_info(&ip_to_lookup).map_err(|e| {
+        error!("IP lookup failed: {e}");
+        e
+    })?;
 
-    let ip_info = get_ip_info(&ip_to_lookup)?;
-
-    if args.verbose {
-        println!("IP Information:");
-        println!("{:#?}", ip_info);
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&OutputJson::from(ip_info))?
+        );
+    } else if args.verbose {
+        println!("IP Details:\n{:#?}", ip_info);
     } else {
-        println!("IP Address: {}", ip_to_lookup);
-        println!("Country: {}", ip_info.country_name);
-        println!("ISP: {}", ip_info.isp);
+        println!(
+            "IP: {}\nCountry: {}\nISP: {}",
+            ip_info.ip, ip_info.country_name, ip_info.isp
+        );
     }
 
     Ok(())
