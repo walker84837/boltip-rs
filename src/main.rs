@@ -173,3 +173,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_parse_ip() {
+        let ip = "8.8.8.8";
+        assert!(parse_ip(ip).is_ok());
+    }
+
+    #[test]
+    fn test_is_special_use() {
+        assert!(is_special_use(&[127, 0, 0, 1]));
+    }
+
+    #[test]
+    fn test_random_ip() {
+        let ip = generate_random_ip();
+        let ip = ip.as_str();
+        assert!(parse_ip(ip).is_ok());
+        let parts: Vec<u8> = ip
+            .split('.')
+            .into_iter()
+            .map(|el| el.parse::<u8>().unwrap())
+            .collect();
+        assert!(!is_special_use(parts.as_slice()));
+    }
+}
