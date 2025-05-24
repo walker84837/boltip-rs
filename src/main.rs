@@ -113,10 +113,7 @@ fn get_ip_info(ip: &str) -> Result<IpInfo, RequestError> {
     info!("Fetching info for IP: {ip}");
     let url = format!("https://api.iplocation.net/?ip={ip}");
 
-    let response = ureq::get(&url).call().map_err(|e| {
-        error!("IP info request failed: {e}");
-        e
-    })?;
+    let response = ureq::get(&url).call()?;
 
     let body = response
         .into_string()
@@ -124,12 +121,12 @@ fn get_ip_info(ip: &str) -> Result<IpInfo, RequestError> {
 
     let ip_info: IpInfo = serde_json::from_str(&body).map_err(|e| RequestError::InvalidJson(e))?;
 
-    if ip_info.response_code != "200" {
-        warn!("API returned non-success status");
-        Err(RequestError::NoIpInformation)
-    } else {
-        Ok(ip_info)
+    if ip_info.response_code == "200" {
+        return Ok(ip_info);
     }
+
+    warn!("API returned non-success status");
+    Err(RequestError::NoIpInformation)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -150,35 +147,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     if !args.random {
-        parse_ip(&ip_to_lookup)
-            .and_then(|parts| {
-                if is_special_use(&parts) {
-                    Err(RequestError::SpecialUse)
-                } else {
-                    Ok(())
-                }
-            })
-            .map_err(|e| {
-                error!("IP validation failed: {e}");
-                e
-            })?;
+        parse_ip(&ip_to_lookup).and_then(|parts| {
+            if is_special_use(&parts) {
+                Err(RequestError::SpecialUse)
+            } else {
+                Ok(())
+            }
+        })?;
     }
 
-    let ip_info = get_ip_info(&ip_to_lookup).map_err(|e| {
-        error!("IP lookup failed: {e}");
-        e
-    })?;
+    let ip_info = get_ip_info(&ip_to_lookup)?;
 
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&OutputJson::from(ip_info))?
-        );
+        let contents = serde_json::to_string_pretty(&OutputJson::from(ip_info))?;
+        println!("{contents}");
     } else if args.verbose {
-        println!("IP Details:\n{:#?}", ip_info);
+        println!("IP Details:");
+        println!("{:#?}", ip_info);
     } else {
         println!(
-            "IP: {}\nCountry: {}\nISP: {}",
+            "- IP: {}\n- Country: {}\n- ISP: {}",
             ip_info.ip, ip_info.country_name, ip_info.isp
         );
     }
